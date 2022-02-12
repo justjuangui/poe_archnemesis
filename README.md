@@ -1,4 +1,13 @@
+# Features
+
+## General
 ![TromArchemesis](./doc/poearchenemesis.png)
+
+## Select Recipe
+![TromArchemesis](./doc/selectrecipe.png)
+
+## What can i do with my inventory
+![TromArchemesis](./doc/whatcanido.png)
 
 ## Build for debugging
 go build -gcflags=all="-N -l" .\src\main.go

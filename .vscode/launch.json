@@ -9,6 +9,7 @@
             "type": "go",
             "request": "launch",
             "mode": "exec",
+            "console": "externalTerminal",
             "program": "${workspaceRoot}\\main.exe",
             "showLog": true
         }

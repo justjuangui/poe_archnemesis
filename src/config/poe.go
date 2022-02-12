@@ -9,6 +9,21 @@ type ArchNemesisBag map[string]int
 
 type ArchNemesisRecipe map[string][]string
 
+func (data ArchNemesisRecipe) ToMapString() []string {
+	rData := []string{}
+
+	keys := make([]string, 0, len(data))
+	for k, v := range data {
+		if len(v) > 0 {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	rData = append(rData, keys...)
+
+	return rData
+}
+
 func (data ArchNemesisBag) ToMapString() []string {
 	rData := []string{}
 

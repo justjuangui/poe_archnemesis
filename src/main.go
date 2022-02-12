@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/jroimartin/gocui"
@@ -29,7 +30,14 @@ var (
 	resolveOutputPath   string
 	needsOutputPath     string
 
-	myBag config.ArchNemesisBag
+	myBag       config.ArchNemesisBag
+	data        config.DataDescription
+	recipesDict config.ArchNemesisRecipe
+
+	currentRecipe string
+	currentAction int      = 0
+	actions       []string = []string{"My Inventary", "What can i do?"}
+	totalActions  int      = len(actions) - 1
 )
 
 func init() {
@@ -41,6 +49,13 @@ func init() {
 	inventoryOutputPath = filepath.Join(outputPath, "inventory.txt")
 	resolveOutputPath = filepath.Join(outputPath, "resolve.txt")
 	needsOutputPath = filepath.Join(outputPath, "needs.txt")
+
+	err := loadConfig(dataPath)
+
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 }
 
 func getCurrentFolder() (string, error) {
@@ -48,21 +63,19 @@ func getCurrentFolder() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// default "C:\\Users\\jcarvajal\\Documents\\golang\\poe\\data"
+
 	exPath := filepath.Dir(ex)
 	return exPath, nil
 }
 
-func loadConfig(configPath string) (config.DataDescription, error) {
+func loadConfig(configPath string) error {
 	viper.SetConfigName("data")
 	viper.AddConfigPath(configPath)
 	viper.SetConfigType("json")
 
-	var data config.DataDescription
-
 	if err := viper.ReadInConfig(); err != nil {
 		err1 := fmt.Errorf("config: Error reading config file, %s", err)
-		return data, err1
+		return err1
 	}
 
 	viper.SetConfigName("my")
@@ -71,9 +84,16 @@ func loadConfig(configPath string) (config.DataDescription, error) {
 	err := viper.Unmarshal(&data)
 	if err != nil {
 		err1 := fmt.Errorf("config: Unable to decode into struct, %s", err)
-		return data, err1
+		return err1
 	}
-	return data, nil
+
+	// load recipes & calculate info
+	recipesDict = make(config.ArchNemesisRecipe)
+	for _, recipe := range data.Recipes {
+		recipesDict[recipe.Id] = recipe.Ingredients
+	}
+
+	return nil
 }
 
 func printInConsole(g *gocui.Gui, s string) {
@@ -82,7 +102,20 @@ func printInConsole(g *gocui.Gui, s string) {
 		if err != nil {
 			return err
 		}
+
 		fmt.Fprintln(v, s)
+		return nil
+	})
+}
+
+func clearConsole(g *gocui.Gui) {
+	g.Update(func(g *gocui.Gui) error {
+		v, err := g.View("logs")
+		if err != nil {
+			return err
+		}
+
+		v.Clear()
 		return nil
 	})
 }
@@ -96,6 +129,21 @@ func updateInventory(g *gocui.Gui) {
 		v.Clear()
 
 		for _, i := range myBag.ToMapString() {
+			fmt.Fprintln(v, i)
+		}
+		return nil
+	})
+}
+
+func updateWhatCanIDo(g *gocui.Gui, items []string) {
+	g.Update(func(g *gocui.Gui) error {
+		v, err := g.View("whatcanido")
+		if err != nil {
+			return err
+		}
+		v.Clear()
+
+		for _, i := range items {
 			fmt.Fprintln(v, i)
 		}
 		return nil
@@ -146,32 +194,9 @@ func updateRecipes(g *gocui.Gui, recipes []string) {
 	})
 }
 
-func processInfo(g *gocui.Gui) {
-	data, err := loadConfig(dataPath)
-
-	if err != nil {
-		printInConsole(g, fmt.Sprintln(err))
-		return
-	}
-
-	if data.Trace {
-
-		if _, err := os.Stat(outputPath); err == nil {
-			if err := os.RemoveAll(outputPath); err != nil {
-				printInConsole(g, fmt.Sprintf("Folder %s couldn't delete\n", outputPath))
-				return
-			}
-		}
-		err := os.Mkdir(outputPath, 0755)
-		if err != nil {
-			printInConsole(g, fmt.Sprintf("Folder %s couldn't create\n", outputPath))
-			return
-		}
-	}
-
+func getInventoryInfo(g *gocui.Gui) {
 	// by default use image called mystash.png
 	myStashPath := filepath.Join(basePath, "mystash.png")
-	go updateRecipes(g, []string{data.RecipeIWant})
 
 	imgStash := gocv.IMRead(myStashPath, gocv.IMReadGrayScale)
 
@@ -238,26 +263,31 @@ func processInfo(g *gocui.Gui) {
 
 	writeToFile(g, inventoryOutputPath, myBag.ToMapString())
 	go updateInventory(g)
+}
 
-	// load recipes & calculate info
-	recipesDict := make(config.ArchNemesisRecipe)
-	for _, recipe := range data.Recipes {
-		recipesDict[recipe.Id] = recipe.Ingredients
-	}
+func calculateMyRecipes(g *gocui.Gui) {
 	// evaluate and expand
 	needs := make(config.ArchNemesisBag)
 	messages := []string{}
 
 	myBagClone := myBag.Clone()
-	helpers.Calculate(&messages, &needs, &myBagClone, &recipesDict, data.RecipeIWant, 1, 0, false)
+	if currentRecipe == "" {
+		currentRecipe = data.RecipeIWant
+	}
+
+	go updateRecipes(g, []string{currentRecipe})
+	helpers.Calculate(&messages, &needs, &myBagClone, &recipesDict, currentRecipe, 1, 0, false)
 
 	writeToFile(g, resolveOutputPath, messages)
 	writeToFile(g, needsOutputPath, needs.ToMapString())
 
 	go updateNeeds(g, needs.ToMapString())
 	go updateResolve(g, messages)
+}
 
+func calculateWhatCanIBuild(g *gocui.Gui) {
 	// Evaluate if I can build any Recipe
+	builds := []string{}
 	for k, v := range recipesDict {
 		if len(v) == 0 {
 			continue
@@ -271,9 +301,41 @@ func processInfo(g *gocui.Gui) {
 
 		if len(tmpNeeds) == 0 {
 			// A Candidate to build
+			builds = append(builds, fmt.Sprintf("%-28s", k))
 			writeToFile(g, filepath.Join(outputPath, fmt.Sprintf("CAN BUILD %s.txt", k)), tmpMessages)
 		}
 	}
+	sort.Strings(builds)
+	go updateWhatCanIDo(g, builds)
+}
+
+func processInfo(g *gocui.Gui) {
+	clearConsole(g)
+	err := loadConfig(basePath)
+
+	if err != nil {
+		printInConsole(g, fmt.Sprintln("Can't open config", err))
+		return
+	}
+
+	if data.Trace {
+
+		if _, err := os.Stat(outputPath); err == nil {
+			if err := os.RemoveAll(outputPath); err != nil {
+				printInConsole(g, fmt.Sprintf("Folder %s couldn't delete\n", outputPath))
+				return
+			}
+		}
+		err := os.Mkdir(outputPath, 0755)
+		if err != nil {
+			printInConsole(g, fmt.Sprintf("Folder %s couldn't create\n", outputPath))
+			return
+		}
+	}
+
+	getInventoryInfo(g)
+	go calculateMyRecipes(g)
+	go calculateWhatCanIBuild(g)
 }
 
 func openOuputFolder(g *gocui.Gui, v *gocui.View) error {
@@ -312,6 +374,144 @@ func screenshot(g *gocui.Gui, v *gocui.View) error {
 	return nil
 }
 
+func nextView(g *gocui.Gui, v *gocui.View) error {
+	if !ui.CanChangeView {
+		return nil
+	}
+
+	nextIndex := (ui.CurrentIndexView + 1) % len(ui.Views)
+	name := ui.Views[nextIndex]
+
+	if _, err := ui.SetCurrentViewOnTop(g, name); err != nil {
+		return err
+	}
+
+	ui.CurrentIndexView = nextIndex
+	return nil
+}
+
+func updateActions(g *gocui.Gui) {
+	g.Update(func(g *gocui.Gui) error {
+		v, err := g.View("actions")
+		if err != nil {
+			return err
+		}
+
+		v.Clear()
+		for i, a := range actions {
+			selected := ""
+			if i == currentAction {
+				selected = "X"
+			}
+			fmt.Fprintf(v, "[%1s] %-20s ", selected, a)
+		}
+		return nil
+	})
+	if currentAction == 0 {
+		g.SetViewOnTop("inventory")
+	} else {
+		g.SetViewOnTop("whatcanido")
+	}
+}
+
+func actionsLeft(g *gocui.Gui, v *gocui.View) error {
+	nextAction := currentAction - 1
+	if nextAction < 0 {
+		nextAction = 0
+	}
+
+	if nextAction != currentAction {
+		currentAction = nextAction
+		go updateActions(g)
+	}
+	return nil
+}
+
+func actionsRight(g *gocui.Gui, v *gocui.View) error {
+	nextAction := (currentAction + 1)
+	if nextAction > totalActions {
+		nextAction = totalActions
+	}
+
+	if nextAction != currentAction {
+		currentAction = nextAction
+		go updateActions(g)
+	}
+	return nil
+}
+
+func recipeEnter(g *gocui.Gui, v *gocui.View) error {
+	g.Update(func(g *gocui.Gui) error {
+		v, err := ui.ShowRecipes(g)
+		if err != nil {
+			return err
+		}
+
+		// fill the information
+		recipes := recipesDict.ToMapString()
+		v.Title = fmt.Sprintf("Select Recipe you want (%d)", len(recipes))
+
+		ox, oy := v.Origin()
+
+		for i, r := range recipes {
+			fmt.Fprintln(v, r)
+			if r == currentRecipe {
+				oy += i
+			}
+		}
+
+		v.SetCursor(ox, oy)
+		return nil
+	})
+
+	return nil
+}
+
+func showRecipeEsc(g *gocui.Gui, v *gocui.View) error {
+	if v != nil {
+		_, cy := v.Cursor()
+		_, oy := v.Origin()
+		curRecipeIndex := oy + cy
+		newCurrentRecipe := recipesDict.ToMapString()[curRecipeIndex]
+		if currentRecipe != newCurrentRecipe {
+			currentRecipe = newCurrentRecipe
+			go calculateMyRecipes(g)
+		}
+	}
+	_, err := ui.HideRecipes(g)
+	return err
+}
+
+func showRecipeCursorDown(g *gocui.Gui, v *gocui.View) error {
+	if v != nil {
+		cx, cy := v.Cursor()
+		if err := v.SetCursor(cx, cy+1); err != nil {
+			ox, oy := v.Origin()
+			if err := v.SetOrigin(ox, oy+1); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func showRecipeCursorUp(g *gocui.Gui, v *gocui.View) error {
+	if v != nil {
+		ox, oy := v.Origin()
+		cx, cy := v.Cursor()
+		if err := v.SetCursor(cx, cy-1); err != nil && oy > 0 {
+			if err := v.SetOrigin(ox, oy-1); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func quit(g *gocui.Gui, v *gocui.View) error {
+	return gocui.ErrQuit
+}
+
 func initKeybindings(g *gocui.Gui) error {
 	if err := g.SetKeybinding("", gocui.KeyCtrlC, gocui.ModNone, quit); err != nil {
 		return err
@@ -329,11 +529,36 @@ func initKeybindings(g *gocui.Gui) error {
 		return err
 	}
 
-	return nil
-}
+	if err := g.SetKeybinding("", gocui.KeyTab, gocui.ModNone, nextView); err != nil {
+		return err
+	}
 
-func quit(g *gocui.Gui, v *gocui.View) error {
-	return gocui.ErrQuit
+	// Actions handlers
+	if err := g.SetKeybinding("actions", gocui.KeyArrowLeft, gocui.ModNone, actionsLeft); err != nil {
+		return err
+	}
+
+	if err := g.SetKeybinding("actions", gocui.KeyArrowRight, gocui.ModNone, actionsRight); err != nil {
+		return err
+	}
+
+	// recipe actions
+	if err := g.SetKeybinding("recipes", gocui.KeyEnter, gocui.ModNone, recipeEnter); err != nil {
+		return err
+	}
+
+	// show recipe actions
+	if err := g.SetKeybinding("showrecipes", gocui.KeyEnter, gocui.ModNone, showRecipeEsc); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding("showrecipes", gocui.KeyArrowDown, gocui.ModNone, showRecipeCursorDown); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding("showrecipes", gocui.KeyArrowUp, gocui.ModNone, showRecipeCursorUp); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func main() {
@@ -347,6 +572,9 @@ func main() {
 	}
 	defer g.Close()
 
+	g.Highlight = true
+	g.SelFgColor = gocui.ColorGreen
+
 	g.SetManagerFunc(ui.Layout)
 
 	if err := initKeybindings(g); err != nil {
@@ -354,6 +582,12 @@ func main() {
 		fmt.Scanln()
 		return
 	}
+
+	updateActions(g)
+	if currentRecipe == "" {
+		currentRecipe = data.RecipeIWant
+	}
+	go updateRecipes(g, []string{currentRecipe})
 
 	if err := g.MainLoop(); err != nil && err != gocui.ErrQuit {
 		fmt.Println("Error exiting app", err)
