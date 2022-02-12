@@ -36,7 +36,7 @@ var (
 
 	currentRecipe string
 	currentAction int      = 0
-	actions       []string = []string{"My Inventary", "What can i do?"}
+	actions       []string = []string{"My Inventory", "What can I do?"}
 	totalActions  int      = len(actions) - 1
 )
 
@@ -375,6 +375,7 @@ func screenshot(g *gocui.Gui, v *gocui.View) error {
 }
 
 func nextView(g *gocui.Gui, v *gocui.View) error {
+	g.Cursor = false
 	if !ui.CanChangeView {
 		return nil
 	}
@@ -449,6 +450,7 @@ func recipeEnter(g *gocui.Gui, v *gocui.View) error {
 
 		// fill the information
 		recipes := recipesDict.ToMapString()
+		v.Clear()
 		v.Title = fmt.Sprintf("Select Recipe you want (%d)", len(recipes))
 
 		ox, oy := v.Origin()
