@@ -14,7 +14,7 @@ go build -gcflags=all="-N -l" .\src\main.go
 
 
 ## Build for release
-go build -ldflags "-s -w"
+go build -ldflags "-s -w" .\src\main.go
 
 ## Dependency Libraries
 * libopencv_calib3d454.dll

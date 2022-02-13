@@ -26,10 +26,6 @@ var (
 	dataPath   string
 	outputPath string
 
-	inventoryOutputPath string
-	resolveOutputPath   string
-	needsOutputPath     string
-
 	myBag       config.ArchNemesisBag
 	data        config.DataDescription
 	recipesDict config.ArchNemesisRecipe
@@ -45,10 +41,6 @@ func init() {
 
 	dataPath = filepath.Join(basePath, "data")
 	outputPath = filepath.Join(basePath, "output")
-
-	inventoryOutputPath = filepath.Join(outputPath, "inventory.txt")
-	resolveOutputPath = filepath.Join(outputPath, "resolve.txt")
-	needsOutputPath = filepath.Join(outputPath, "needs.txt")
 
 	err := loadConfig(dataPath)
 
@@ -96,6 +88,19 @@ func loadConfig(configPath string) error {
 	return nil
 }
 
+func setAutoScrollConsole(g *gocui.Gui, enable bool) {
+	g.Update(func(g *gocui.Gui) error {
+		v, err := g.View("logs")
+		if err != nil {
+			return err
+		}
+
+		v.Autoscroll = enable
+
+		return nil
+	})
+}
+
 func printInConsole(g *gocui.Gui, s string) {
 	g.Update(func(g *gocui.Gui) error {
 		v, err := g.View("logs")
@@ -104,6 +109,7 @@ func printInConsole(g *gocui.Gui, s string) {
 		}
 
 		fmt.Fprintln(v, s)
+
 		return nil
 	})
 }
@@ -116,6 +122,8 @@ func clearConsole(g *gocui.Gui) {
 		}
 
 		v.Clear()
+		v.SetOrigin(0, 0)
+		v.SetCursor(0, 0)
 		return nil
 	})
 }
@@ -128,6 +136,12 @@ func updateInventory(g *gocui.Gui) {
 		}
 		v.Clear()
 
+		quantity := 0
+		for _, v := range myBag {
+			quantity += v
+		}
+
+		v.Title = fmt.Sprintf("Inventiry(%2d)", quantity)
 		for _, i := range myBag.ToMapString() {
 			fmt.Fprintln(v, i)
 		}
@@ -195,13 +209,14 @@ func updateRecipes(g *gocui.Gui, recipes []string) {
 }
 
 func getInventoryInfo(g *gocui.Gui) {
+	printInConsole(g, "Analizing your stash")
 	// by default use image called mystash.png
 	myStashPath := filepath.Join(basePath, "mystash.png")
 
 	imgStash := gocv.IMRead(myStashPath, gocv.IMReadGrayScale)
 
 	if imgStash.Empty() {
-		printInConsole(g, fmt.Sprintf("Cant read your stash inventory in %s\n", myStashPath))
+		printInConsole(g, fmt.Sprintf("Cant read your stash inventory in %s", myStashPath))
 		return
 	}
 	defer imgStash.Close()
@@ -216,7 +231,7 @@ func getInventoryInfo(g *gocui.Gui) {
 
 		// TODO: validate src
 		// TODO: validate src path exists
-
+		printInConsole(g, fmt.Sprintf("Evaluaring %s", resource.Id))
 		srcPath := filepath.Join(dataPath, resource.Src)
 
 		img := gocv.NewMat()
@@ -224,7 +239,7 @@ func getInventoryInfo(g *gocui.Gui) {
 
 		imgFind := gocv.IMRead(srcPath, gocv.IMReadGrayScale)
 		if imgFind.Empty() {
-			printInConsole(g, fmt.Sprintf("Resource %s: Image no found %s\n", resource.Id, resource.Src))
+			printInConsole(g, fmt.Sprintf("Resource %s: Image no found %s", resource.Id, resource.Src))
 			continue
 		}
 		defer imgFind.Close()
@@ -234,8 +249,11 @@ func getInventoryInfo(g *gocui.Gui) {
 
 		gocv.MatchTemplate(imgStash, imgFind, &img, gocv.TmCcoeffNormed, gocv.NewMat())
 
-		imgFindStash := imgStashTrace.Clone()
-		defer imgFindStash.Close()
+		var imgFindStash gocv.Mat
+		if data.Trace {
+			imgFindStash = imgStashTrace.Clone()
+			defer imgFindStash.Close()
+		}
 
 		for row := 0; row < img.Rows(); row++ {
 			for col := 0; col < img.Cols(); col++ {
@@ -243,7 +261,9 @@ func getInventoryInfo(g *gocui.Gui) {
 				valueF := img.GetFloatAt(row, col)
 
 				if valueF >= 0.98 {
-					gocv.Rectangle(&imgFindStash, image.Rect(col, row, col+imgFindW, row+imgFindH), color.RGBA{255, 0, 0, 0}, 2)
+					if data.Trace {
+						gocv.Rectangle(&imgFindStash, image.Rect(col, row, col+imgFindW, row+imgFindH), color.RGBA{255, 0, 0, 0}, 2)
+					}
 
 					// add in stashBag
 					myBag[resource.Id]++
@@ -254,14 +274,14 @@ func getInventoryInfo(g *gocui.Gui) {
 		// save image in output
 		if data.Trace {
 			outputImg := filepath.Join(outputPath, fmt.Sprintf("%s.png", resource.Id))
-			printInConsole(g, fmt.Sprintf("writing trace for %s: %s\n", resource.Id, outputImg))
+			printInConsole(g, fmt.Sprintf("writing trace for %s: %s", resource.Id, outputImg))
 			if ok := gocv.IMWrite(outputImg, imgFindStash); !ok {
-				printInConsole(g, fmt.Sprintf("Failed for %s: %s\n", resource.Id, outputImg))
+				printInConsole(g, fmt.Sprintf("Failed for %s: %s", resource.Id, outputImg))
 			}
 		}
 	}
 
-	writeToFile(g, inventoryOutputPath, myBag.ToMapString())
+	printInConsole(g, "Updataring inventory info")
 	go updateInventory(g)
 }
 
@@ -277,9 +297,6 @@ func calculateMyRecipes(g *gocui.Gui) {
 
 	go updateRecipes(g, []string{currentRecipe})
 	helpers.Calculate(&messages, &needs, &myBagClone, &recipesDict, currentRecipe, 1, 0, false)
-
-	writeToFile(g, resolveOutputPath, messages)
-	writeToFile(g, needsOutputPath, needs.ToMapString())
 
 	go updateNeeds(g, needs.ToMapString())
 	go updateResolve(g, messages)
@@ -302,7 +319,6 @@ func calculateWhatCanIBuild(g *gocui.Gui) {
 		if len(tmpNeeds) == 0 {
 			// A Candidate to build
 			builds = append(builds, fmt.Sprintf("%-28s", k))
-			writeToFile(g, filepath.Join(outputPath, fmt.Sprintf("CAN BUILD %s.txt", k)), tmpMessages)
 		}
 	}
 	sort.Strings(builds)
@@ -310,7 +326,9 @@ func calculateWhatCanIBuild(g *gocui.Gui) {
 }
 
 func processInfo(g *gocui.Gui) {
+	setAutoScrollConsole(g, true)
 	clearConsole(g)
+	printInConsole(g, "Realoding configuration")
 	err := loadConfig(basePath)
 
 	if err != nil {
@@ -322,13 +340,13 @@ func processInfo(g *gocui.Gui) {
 
 		if _, err := os.Stat(outputPath); err == nil {
 			if err := os.RemoveAll(outputPath); err != nil {
-				printInConsole(g, fmt.Sprintf("Folder %s couldn't delete\n", outputPath))
+				printInConsole(g, fmt.Sprintf("Folder %s couldn't delete", outputPath))
 				return
 			}
 		}
 		err := os.Mkdir(outputPath, 0755)
 		if err != nil {
-			printInConsole(g, fmt.Sprintf("Folder %s couldn't create\n", outputPath))
+			printInConsole(g, fmt.Sprintf("Folder %s couldn't create", outputPath))
 			return
 		}
 	}
@@ -336,6 +354,8 @@ func processInfo(g *gocui.Gui) {
 	getInventoryInfo(g)
 	go calculateMyRecipes(g)
 	go calculateWhatCanIBuild(g)
+
+	go printInConsole(g, "Done")
 }
 
 func openOuputFolder(g *gocui.Gui, v *gocui.View) error {
@@ -346,11 +366,13 @@ func openOuputFolder(g *gocui.Gui, v *gocui.View) error {
 }
 
 func reProcessInfo(g *gocui.Gui, v *gocui.View) error {
+	printInConsole(g, fmt.Sprintln("Recalculating"))
 	go processInfo(g)
 	return nil
 }
 
 func screenshot(g *gocui.Gui, v *gocui.View) error {
+	printInConsole(g, "One moment, taking the screenshot from poe")
 	//take screenshot poe
 	img, err := helpers.Capture()
 	if err != nil {
@@ -375,13 +397,18 @@ func screenshot(g *gocui.Gui, v *gocui.View) error {
 }
 
 func nextView(g *gocui.Gui, v *gocui.View) error {
-	g.Cursor = false
 	if !ui.CanChangeView {
 		return nil
 	}
 
 	nextIndex := (ui.CurrentIndexView + 1) % len(ui.Views)
 	name := ui.Views[nextIndex]
+
+	if name == "logs" {
+		setAutoScrollConsole(g, false)
+	} else {
+		setAutoScrollConsole(g, true)
+	}
 
 	if _, err := ui.SetCurrentViewOnTop(g, name); err != nil {
 		return err
@@ -484,7 +511,7 @@ func showRecipeEsc(g *gocui.Gui, v *gocui.View) error {
 	return err
 }
 
-func showRecipeCursorDown(g *gocui.Gui, v *gocui.View) error {
+func viewCursorDown(g *gocui.Gui, v *gocui.View) error {
 	if v != nil {
 		cx, cy := v.Cursor()
 		if err := v.SetCursor(cx, cy+1); err != nil {
@@ -497,7 +524,7 @@ func showRecipeCursorDown(g *gocui.Gui, v *gocui.View) error {
 	return nil
 }
 
-func showRecipeCursorUp(g *gocui.Gui, v *gocui.View) error {
+func viewCursorUp(g *gocui.Gui, v *gocui.View) error {
 	if v != nil {
 		ox, oy := v.Origin()
 		cx, cy := v.Cursor()
@@ -553,13 +580,36 @@ func initKeybindings(g *gocui.Gui) error {
 	if err := g.SetKeybinding("showrecipes", gocui.KeyEnter, gocui.ModNone, showRecipeEsc); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding("showrecipes", gocui.KeyArrowDown, gocui.ModNone, showRecipeCursorDown); err != nil {
+	if err := g.SetKeybinding("showrecipes", gocui.KeyArrowDown, gocui.ModNone, viewCursorDown); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding("showrecipes", gocui.KeyArrowUp, gocui.ModNone, showRecipeCursorUp); err != nil {
+	if err := g.SetKeybinding("showrecipes", gocui.KeyArrowUp, gocui.ModNone, viewCursorUp); err != nil {
 		return err
 	}
 
+	// inventory actions
+	if err := g.SetKeybinding("inventory", gocui.KeyArrowDown, gocui.ModNone, viewCursorDown); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding("inventory", gocui.KeyArrowUp, gocui.ModNone, viewCursorUp); err != nil {
+		return err
+	}
+
+	// logs actions
+	if err := g.SetKeybinding("logs", gocui.KeyArrowDown, gocui.ModNone, viewCursorDown); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding("logs", gocui.KeyArrowUp, gocui.ModNone, viewCursorUp); err != nil {
+		return err
+	}
+
+	// resolve actions
+	if err := g.SetKeybinding("resolve", gocui.KeyArrowDown, gocui.ModNone, viewCursorDown); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding("resolve", gocui.KeyArrowUp, gocui.ModNone, viewCursorUp); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -576,6 +626,7 @@ func main() {
 
 	g.Highlight = true
 	g.SelFgColor = gocui.ColorGreen
+	g.Cursor = true
 
 	g.SetManagerFunc(ui.Layout)
 
@@ -596,27 +647,4 @@ func main() {
 		fmt.Scanln()
 		return
 	}
-}
-
-func writeToFile(g *gocui.Gui, filePath string, d []string) {
-	f, err := os.Create(filePath)
-	if err != nil {
-		fmt.Println(err)
-		f.Close()
-		return
-	}
-
-	for _, v := range d {
-		fmt.Fprintln(f, v)
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-	}
-	err = f.Close()
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-	printInConsole(g, fmt.Sprintf("file %s written successfully\n", filePath))
 }

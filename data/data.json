@@ -61,11 +61,8 @@
         { "id": "Hexer", "src": "/img/hexer.png"},
         { "id": "Evocationist", "src": "/img/evocationist.png"},
         { "id": "Empowered Elements", "src": "/img/empoweredelements.png"},
-        { "id": "Effigy", "src": "/img/effigy.png"},
-        
-        
+        { "id": "Effigy", "src": "/img/effigy.png"},  
         { "id": "Crystal-skinned", "src": "/img/crystalskinned.png"}
-        
     ],
     "recipes": [
         { "id": "Crystal-skinned", "ingredients": ["Permafrost", "Rejuvenating", "Berserker"] },
@@ -104,8 +101,6 @@
         { "id": "Evocationist", "ingredients": ["Flameweaver", "Frostweaver", "Stormweaver"] },
         { "id": "Empowered Elements", "ingredients": ["Evocationist", "Steel-infused", "Chaosweaver"] },
         { "id": "Effigy", "ingredients": ["Hexer", "Malediction", "Corrupter"] },
-        
-
         { "id": "Permafrost", "ingredients": [] },
         { "id": "Berserker", "ingredients": [] },
         { "id": "Gargantuan", "ingredients": [] },

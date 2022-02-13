@@ -12,7 +12,7 @@ const (
 
 var (
 	CurrentIndexView int      = -1
-	Views            []string = []string{"actions", "recipes"}
+	Views            []string = []string{"actions", "recipes", "inventory", "resolve", "logs"}
 	CanChangeView    bool     = true
 )
 
@@ -80,7 +80,6 @@ func Layout(g *gocui.Gui) error {
 			return err
 		}
 		v.Title = "Logs"
-		v.Autoscroll = true
 	}
 
 	if v, err := g.SetView("Keybindings", 0, maxY-6-margin, margin+31, maxY-margin); err != nil {
